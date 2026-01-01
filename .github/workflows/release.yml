@@ -1,0 +1,39 @@
+name: Release (Windows)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build .\win98get.sln -c Release
+
+      - name: Publish and package (dist/)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/publish-and-prune.ps1
+
+      - name: Create GitHub Release and upload EXEs
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/retro/*.exe
+            dist/modern/*.exe
+          generate_release_notes: true
