@@ -30,6 +30,17 @@ jobs:
           $ErrorActionPreference = 'Stop'
           ./scripts/publish-and-prune.ps1
 
+      - name: Sign EXEs (optional)
+        if: ${{ secrets.WIN98GET_SIGN_PFX_B64 != '' && secrets.WIN98GET_SIGN_PFX_PASSWORD != '' }}
+        shell: pwsh
+        env:
+          WIN98GET_SIGN_PFX_B64: ${{ secrets.WIN98GET_SIGN_PFX_B64 }}
+          WIN98GET_SIGN_PFX_PASSWORD: ${{ secrets.WIN98GET_SIGN_PFX_PASSWORD }}
+          WIN98GET_SIGN_TIMESTAMP_URL: ${{ secrets.WIN98GET_SIGN_TIMESTAMP_URL }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/sign-dist.ps1
+
       - name: Generate SHA256 checksums
         shell: pwsh
         run: |
