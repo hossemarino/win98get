@@ -30,10 +30,31 @@ jobs:
           $ErrorActionPreference = 'Stop'
           ./scripts/publish-and-prune.ps1
 
-      - name: Create GitHub Release and upload EXEs
+      - name: Generate SHA256 checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem -LiteralPath "dist" -Recurse -File -Filter "*.exe" | Sort-Object FullName
+          if (-not $files) {
+            throw "No EXEs found under dist/."
+          }
+
+          $outFile = Join-Path -Path "dist" -ChildPath "SHA256SUMS.txt"
+          $lines = foreach ($f in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $f.FullName).Hash.ToLowerInvariant()
+            $rel = $f.FullName.Replace((Resolve-Path "dist").Path + "\", "dist\")
+            "$hash  $rel"
+          }
+
+          $lines | Set-Content -LiteralPath $outFile -Encoding ASCII
+          Write-Host "Wrote: $outFile"
+          Get-Content -LiteralPath $outFile
+
+      - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/retro/*.exe
             dist/modern/*.exe
+            dist/SHA256SUMS.txt
           generate_release_notes: true
