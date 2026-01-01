@@ -1,6 +1,6 @@
 param(
   [string]$PfxBase64 = $env:WIN98GET_SIGN_PFX_B64,
-  [string]$PfxPassword = $env:WIN98GET_SIGN_PFX_PASSWORD,
+  [SecureString]$PfxPassword,
   [string]$TimestampUrl = $env:WIN98GET_SIGN_TIMESTAMP_URL
 )
 
@@ -33,7 +33,25 @@ if (-not $PfxBase64) {
 }
 
 if (-not $PfxPassword) {
-  throw "Missing PFX password. Provide -PfxPassword or set WIN98GET_SIGN_PFX_PASSWORD."
+  if (-not $env:WIN98GET_SIGN_PFX_PASSWORD) {
+    throw "Missing PFX password. Provide -PfxPassword (SecureString) or set WIN98GET_SIGN_PFX_PASSWORD."
+  }
+
+  $PfxPassword = ConvertTo-SecureString -String $env:WIN98GET_SIGN_PFX_PASSWORD -AsPlainText -Force
+}
+
+function Get-PlainTextFromSecureString {
+  param([Parameter(Mandatory=$true)][SecureString]$Value)
+
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
+  try {
+    return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+  }
+  finally {
+    if ($bstr -ne [IntPtr]::Zero) {
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+  }
 }
 
 $signTool = Find-SignTool
@@ -56,7 +74,8 @@ try {
 
   foreach ($exe in $exePaths) {
     Write-Host "Signing: $exe"
-    & $signTool sign /fd SHA256 /f $pfxPath /p $PfxPassword /tr $TimestampUrl /td SHA256 /v $exe
+    $plainPassword = Get-PlainTextFromSecureString -Value $PfxPassword
+    & $signTool sign /fd SHA256 /f $pfxPath /p $plainPassword /tr $TimestampUrl /td SHA256 /v $exe
     if ($LASTEXITCODE -ne 0) {
       throw "signtool sign failed for $exe (exit $LASTEXITCODE)"
     }
