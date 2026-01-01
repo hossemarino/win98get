@@ -1,0 +1,22 @@
+# Build outputs
+**/bin/
+**/obj/
+
+# Packaged outputs (created by publish scripts)
+dist/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Diagnostics / logs
+*.log
+*.binlog
+modern-build-diag.txt
+
+# Windows cruft
+Thumbs.db
+Desktop.ini

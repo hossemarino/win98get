@@ -1,0 +1,1222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Win98Get – Internal Documentation</title>
+  <style>
+    body { font-family: Segoe UI, Arial, sans-serif; margin: 24px; line-height: 1.35; }
+    code, pre { font-family: Consolas, ui-monospace, Menlo, monospace;}
+    pre { padding: 12px; background: #fffefd; border: 1px solid #ddd; overflow: auto; }
+    h1, h2, h3 { margin: 18px 0 8px; }
+    .muted { color: #555; }
+    .note { background: #fffbe6; border: 1px solid #e6d37a; padding: 10px 12px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; vertical-align: top; }
+    th { background: #f2f2f2; text-align: left; }
+    .toc a { text-decoration: none; }
+    .cols { columns: 2; column-gap: 20px; }
+    .cols ul { margin-top: 0; }
+    .glossary-index { list-style: none; padding-left: 0; }
+    .glossary-index li { margin: 2px 0; }
+    .glossary dt { font-weight: 700; margin-top: 10px; }
+    .glossary dd { margin-left: 0; margin-top: 4px; }
+    .token { white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <h1>Win98Get – Internal Documentation</h1>
+
+  <p class="muted">
+    Audience: internal developers and C# beginners.
+    Goal: explain how the Windows Forms (WinForms) GUI is wired to the <code>winget</code> command-line interface (CLI),
+    what each function does, and which C# / .NET concepts are involved.
+  </p>
+
+  <div class="note">
+    <strong>Philosophy (explicit):</strong>
+    <ul>
+      <li>This document is intentionally verbose.</li>
+      <li>We try to define every term used, even if it seems “obvious”.</li>
+      <li>If you find a term in the code or UI that is not defined in the glossary, add it.</li>
+      <li>When a term can have multiple meanings (example: “handle”), we define the relevant meaning(s) here.</li>
+    </ul>
+  </div>
+
+  <h2>Table of Contents</h2>
+  <ul class="toc">
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#glossary">Glossary (define every term)</a></li>
+    <li><a href="#cs-punctuation">C# punctuation glossary (symbols)</a></li>
+    <li><a href="#deep-dive-basics">Deep dive: basics (computer + text)</a></li>
+    <li><a href="#deep-dive-dotnet">Deep dive: .NET + build + publish</a></li>
+    <li><a href="#deep-dive-winforms">Deep dive: WinForms + UI thread</a></li>
+    <li><a href="#deep-dive-processes">Deep dive: processes + exit codes</a></li>
+    <li><a href="#deep-dive-powershell">Deep dive: PowerShell + scripts</a></li>
+    <li><a href="#repo">Repository layout</a></li>
+    <li><a href="#build-run-publish">Build / Run / Publish (what the commands mean)</a></li>
+    <li><a href="#architecture">Architecture (Big Picture)</a></li>
+    <li><a href="#ui">UI: MainForm</a></li>
+    <li><a href="#sorting">Sorting + sort indicator (ASC/DESC)</a></li>
+    <li><a href="#services">Services</a></li>
+    <li><a href="#models">Models</a></li>
+    <li><a href="#patterns">C# Patterns Used</a></li>
+    <li><a href="#foreach">Mini-lesson: <code>foreach (var x in new[] { ... })</code></a></li>
+    <li><a href="#winget-commands">Winget commands (line-by-line)</a></li>
+    <li><a href="#winforms-events">WinForms events we hook (line-by-line)</a></li>
+    <li><a href="#troubleshooting">Troubleshooting (common questions)</a></li>
+  </ul>
+
+  <h2 id="overview">Overview</h2>
+  <p>
+    Win98Get is a desktop application (a windowed program) built using Windows Forms (WinForms).
+    WinForms is a UI framework (a library for building user interfaces) that is part of .NET.
+  </p>
+  <p>
+    The app is a graphical user interface (GUI) “wrapper” for <code>winget</code>.
+    A wrapper means Win98Get does not implement package management itself; it calls the existing winget CLI tool.
+    The core approach is: “run winget commands, then show the results in a grid, and stream winget output into a log”.
+  </p>
+  <p>
+    Winget sometimes prints output as a human-readable text table (columns aligned with spaces).
+    Some winget versions do not offer reliable JSON output for the commands we need (<code>list</code> and <code>search</code>).
+    JSON is a structured text format that is easy for programs to parse.
+    When JSON is not available, we parse the text table.
+  </p>
+  <p>Key user-facing features:</p>
+  <ul>
+    <li>Installed packages list (<code>winget list</code>) with update/install/uninstall actions.</li>
+    <li>Search tab (<code>winget search</code>) with Enter-to-search and install.</li>
+    <li>Right-click context menus for common actions (copy id, show details, etc.).</li>
+    <li>Persistent output log (a textbox that keeps verbose winget output and does not clear).</li>
+    <li>Cancel button that stops the current operation by cancelling tokens and terminating winget’s process tree.</li>
+  </ul>
+
+  <h2 id="glossary">Glossary (define every term)</h2>
+  <p>
+    This glossary is deliberately over-complete.
+    If you already know these terms, great — but the goal is that a beginner can read any other section and never feel lost.
+  </p>
+
+  <div class="note">
+    <strong>How to use the glossary:</strong>
+    <ul>
+      <li>If you see a word in the UI or code and you’re not 100% sure what it means, search for it here (Ctrl+F).</li>
+      <li>Some words have multiple meanings depending on context. We try to list the meaning(s) relevant to this project.</li>
+      <li>If a term is missing, add it. This doc treats “basic” words as worth defining.</li>
+    </ul>
+  </div>
+
+  <h3>Glossary index (alphabetical, click to jump)</h3>
+  <p>
+    This is an alphabetical list of terms. Clicking a term jumps to its definition.
+    If you can’t find a term, use Ctrl+F; if it’s still missing, add it.
+  </p>
+
+  <div class="cols">
+    <ul class="glossary-index">
+      <li><a href="#g-absolute-path">Absolute path</a></li>
+      <li><a href="#g-api">API</a></li>
+      <li><a href="#g-app">App / application</a></li>
+      <li><a href="#g-array">Array</a></li>
+      <li><a href="#g-argument">Argument</a></li>
+      <li><a href="#g-asc">ASC / ascending</a></li>
+      <li><a href="#g-ascii">ASCII</a></li>
+      <li><a href="#g-async">async</a></li>
+      <li><a href="#g-asynchronous">Asynchronous</a></li>
+      <li><a href="#g-await">await</a></li>
+      <li><a href="#g-backslash">Backslash (\)</a></li>
+      <li><a href="#g-backend">Backend</a></li>
+      <li><a href="#g-binding">Binding / data binding</a></li>
+      <li><a href="#g-bindingsource">BindingSource</a></li>
+      <li><a href="#g-bool">bool</a></li>
+      <li><a href="#g-button">Button</a></li>
+      <li><a href="#g-callback">Callback</a></li>
+      <li><a href="#g-cancel">Cancel / cancellation</a></li>
+      <li><a href="#g-cancellationtoken">CancellationToken</a></li>
+      <li><a href="#g-cts">CancellationTokenSource (CTS)</a></li>
+      <li><a href="#g-character">Character</a></li>
+      <li><a href="#g-class">Class</a></li>
+      <li><a href="#g-cli">CLI</a></li>
+      <li><a href="#g-clipboard">Clipboard</a></li>
+      <li><a href="#g-column">Column</a></li>
+      <li><a href="#g-column-header">Column header</a></li>
+      <li><a href="#g-compare">Comparer</a></li>
+      <li><a href="#g-compile">Compile</a></li>
+      <li><a href="#g-configuration">Configuration (Debug/Release)</a></li>
+      <li><a href="#g-context-menu">Context menu</a></li>
+      <li><a href="#g-control">Control</a></li>
+      <li><a href="#g-datagridview">DataGridView</a></li>
+      <li><a href="#g-desc">DESC / descending</a></li>
+      <li><a href="#g-dependency">Dependency</a></li>
+      <li><a href="#g-dll">DLL</a></li>
+      <li><a href="#g-dotnet">.NET</a></li>
+      <li><a href="#g-dotnet-runtime">.NET runtime</a></li>
+      <li><a href="#g-dotnet-tool">dotnet</a></li>
+      <li><a href="#g-dotnet-sdk">dotnet SDK</a></li>
+      <li><a href="#g-dpi">DPI</a></li>
+      <li><a href="#g-dpi-scaling">DPI scaling</a></li>
+      <li><a href="#g-event">Event</a></li>
+      <li><a href="#g-event-handler">Event handler</a></li>
+      <li><a href="#g-exception">Exception</a></li>
+      <li><a href="#g-exe">EXE</a></li>
+      <li><a href="#g-executable">Executable</a></li>
+      <li><a href="#g-escape">Escape / escaping</a></li>
+      <li><a href="#g-exit-code">Exit code</a></li>
+      <li><a href="#g-field">Field</a></li>
+      <li><a href="#g-file-path">File path</a></li>
+      <li><a href="#g-format">Format</a></li>
+      <li><a href="#g-framework">Framework</a></li>
+      <li><a href="#g-function">Function / method</a></li>
+      <li><a href="#g-gc">Garbage collector (GC)</a></li>
+      <li><a href="#g-grid">Grid</a></li>
+      <li><a href="#g-gui">GUI</a></li>
+      <li><a href="#g-handle">Handle (UI)</a></li>
+      <li><a href="#g-hkcu">HKCU</a></li>
+      <li><a href="#g-hklm">HKLM</a></li>
+      <li><a href="#g-http">HTTP</a></li>
+      <li><a href="#g-index">Index</a></li>
+      <li><a href="#g-installer">Installer</a></li>
+      <li><a href="#g-json">JSON</a></li>
+      <li><a href="#g-keydown">KeyDown</a></li>
+      <li><a href="#g-linq">LINQ</a></li>
+      <li><a href="#g-library">Library</a></li>
+      <li><a href="#g-package">Package</a></li>
+      <li><a href="#g-parameter">Parameter</a></li>
+      <li><a href="#g-parse">Parse</a></li>
+      <li><a href="#g-pixel">Pixel</a></li>
+      <li><a href="#g-portable">Portable app</a></li>
+      <li><a href="#g-process">Process</a></li>
+      <li><a href="#g-process-tree">Process tree</a></li>
+      <li><a href="#g-project">Project (.csproj)</a></li>
+      <li><a href="#g-property">Property</a></li>
+      <li><a href="#g-publish">Publish</a></li>
+      <li><a href="#g-quote">Quote / quoting</a></li>
+      <li><a href="#g-relative-path">Relative path</a></li>
+      <li><a href="#g-rid">RID</a></li>
+      <li><a href="#g-row">Row</a></li>
+      <li><a href="#g-runtime">Runtime</a></li>
+      <li><a href="#g-self-contained">Self-contained</a></li>
+      <li><a href="#g-single-file">Single-file</a></li>
+      <li><a href="#g-solution">Solution (.sln)</a></li>
+      <li><a href="#g-source">Source</a></li>
+      <li><a href="#g-stdout-stderr">stdout / stderr</a></li>
+      <li><a href="#g-string">String</a></li>
+      <li><a href="#g-substring">Substring / slicing</a></li>
+      <li><a href="#g-tab">Tab</a></li>
+      <li><a href="#g-task">Task</a></li>
+      <li><a href="#g-terminal">Terminal</a></li>
+      <li><a href="#g-textbox">TextBox</a></li>
+      <li><a href="#g-theme">Theme</a></li>
+      <li><a href="#g-thread">Thread</a></li>
+      <li><a href="#g-trim">Trim</a></li>
+      <li><a href="#g-ui-thread">UI thread</a></li>
+      <li><a href="#g-unicode">Unicode</a></li>
+      <li><a href="#g-whitespace">Whitespace</a></li>
+      <li><a href="#g-winforms">WinForms</a></li>
+      <li><a href="#g-winget">winget</a></li>
+      <li><a href="#g-wow6432node">WOW6432Node</a></li>
+    </ul>
+  </div>
+
+  <h3>Glossary entries (alphabetical)</h3>
+  <dl class="glossary">
+    <dt id="g-absolute-path">Absolute path</dt>
+    <dd>An absolute path is a full file/folder location that starts at the root of a drive (example: <code>G:\Programming\pwsh\win98get</code>). It does not depend on the current directory.</dd>
+
+    <dt id="g-api">API</dt>
+    <dd>“Application Programming Interface”. In this repo it means “a set of methods you call” (example: methods on <code>WingetService</code>). It is not a web API endpoint.</dd>
+
+    <dt id="g-app">App / application</dt>
+    <dd>A program you run. Here that program is Win98Get. When you publish, the app is typically <code>Win98Get.exe</code>.</dd>
+
+    <dt id="g-array">Array</dt>
+    <dd>A fixed-size ordered collection of items (example: <code>int[]</code>). Arrays are commonly used for simple lists of values.</dd>
+
+    <dt id="g-argument">Argument</dt>
+    <dd>Text passed to a command-line program. Example: in <code>winget show --id "Microsoft.PowerToys"</code>, the string after <code>--id</code> is an argument value.</dd>
+
+    <dt id="g-asc">ASC / ascending</dt>
+    <dd>A sort direction meaning “small to large”. For text this typically means A→Z. For numbers it means 1→9. For versions it depends on the version comparer.</dd>
+
+    <dt id="g-ascii">ASCII</dt>
+    <dd>A character encoding (mapping from numbers to characters). Mentioned because command output is text; modern systems mostly use Unicode, but ASCII is the historical baseline for English characters.</dd>
+
+    <dt id="g-async">async</dt>
+    <dd>A C# keyword used to mark a method as asynchronous. An <code>async</code> method typically returns <code>Task</code> or <code>Task&lt;T&gt;</code> and can use <code>await</code>.</dd>
+
+    <dt id="g-asynchronous">Asynchronous</dt>
+    <dd>Work that can run without blocking the caller. In UI apps, async work prevents the UI from freezing while a long-running operation (like winget) is executing.</dd>
+
+    <dt id="g-await">await</dt>
+    <dd>A C# keyword used inside an <code>async</code> method. It pauses the method until a <code>Task</code> completes, while allowing the UI thread to keep processing input/paint events.</dd>
+
+    <dt id="g-backslash">Backslash (\)</dt>
+    <dd>The backslash character is commonly used in Windows paths (example: <code>C:\Windows</code>). In C# strings it may need escaping (see the punctuation glossary).</dd>
+
+    <dt id="g-backend">Backend</dt>
+    <dd>The non-UI “engine” of an app. Here it means: running winget, capturing output, parsing tables, and returning structured package objects.</dd>
+
+    <dt id="g-binding">Binding / data binding</dt>
+    <dd>Connecting objects (like a list of <code>WingetPackage</code>) to UI controls so the UI updates automatically. In WinForms, data binding is a standard way to populate a <code>DataGridView</code>.</dd>
+
+    <dt id="g-bindingsource">BindingSource</dt>
+    <dd>A WinForms helper that sits between a UI control and a data list. It helps with refreshing, selection, and other binding behaviors.</dd>
+
+    <dt id="g-bool">bool</dt>
+    <dd>The C# Boolean type, with exactly two values: <code>true</code> or <code>false</code>.</dd>
+
+    <dt id="g-button">Button</dt>
+    <dd>A clickable UI control that raises a <code>Click</code> event when activated.</dd>
+
+    <dt id="g-callback">Callback</dt>
+    <dd>A function passed into another function so it can be called later. Example: <code>ProcessRunner.RunStreamingAsync(..., onOutputLine, ...)</code> calls <code>onOutputLine</code> every time a new output line appears.</dd>
+
+    <dt id="g-cancel">Cancel / cancellation</dt>
+    <dd>Stopping an operation early. In this app, the Cancel button cancels tokens and kills the winget process tree so the external process stops.</dd>
+
+    <dt id="g-cancellationtoken">CancellationToken</dt>
+    <dd>A value passed into methods to allow cooperative cancellation. Code checks the token (or uses APIs that observe it) to stop promptly.</dd>
+
+    <dt id="g-cts">CancellationTokenSource (CTS)</dt>
+    <dd>An object that creates a <code>CancellationToken</code> and can signal cancellation by calling <code>Cancel()</code>. The UI keeps one CTS for “current work”.</dd>
+
+    <dt id="g-character">Character</dt>
+    <dd>A single text symbol (like <code>A</code>, <code>-</code>, <code>1</code>). Strings are sequences of characters.</dd>
+
+    <dt id="g-class">Class</dt>
+    <dd>A C# type that groups data and behavior. Example: <code>MainForm</code> is a class that represents the main window.</dd>
+
+    <dt id="g-cli">CLI</dt>
+    <dd>Command-Line Interface. A program you control by typing commands in a terminal. Winget is a CLI.</dd>
+
+    <dt id="g-clipboard">Clipboard</dt>
+    <dd>An OS feature for copy/paste. The app uses it to copy package Id/Name text.</dd>
+
+    <dt id="g-column">Column</dt>
+    <dd>A vertical field in a table. In a DataGridView, columns are configured with headers like Name/Id/Version.</dd>
+
+    <dt id="g-column-header">Column header</dt>
+    <dd>The top header cell for a column (the row that displays “Name”, “Id”, etc.). Clicking headers triggers sorting in this app.</dd>
+
+    <dt id="g-compare">Comparer</dt>
+    <dd>Code that decides how to compare two values for sorting. For versions we use a version-aware comparer so version strings sort like humans expect.</dd>
+
+    <dt id="g-compile">Compile</dt>
+    <dd>Convert C# source code into IL inside assemblies (DLL/EXE). Compilation happens during build/publish.</dd>
+
+    <dt id="g-configuration">Configuration (Debug/Release)</dt>
+    <dd>Build “modes”. Debug builds are easier to debug. Release builds are optimized and are usually what you publish.</dd>
+
+    <dt id="g-context-menu">Context menu</dt>
+    <dd>A menu shown when the user right-clicks. In WinForms this is typically a <code>ContextMenuStrip</code>.</dd>
+
+    <dt id="g-control">Control</dt>
+    <dd>Any UI element in WinForms (Button, TextBox, DataGridView, etc.). Controls raise events like Click and KeyDown.</dd>
+
+    <dt id="g-datagridview">DataGridView</dt>
+    <dd>The WinForms grid control used to display tabular data. We bind a list of <code>WingetPackage</code> objects so each package becomes a row.</dd>
+
+    <dt id="g-desc">DESC / descending</dt>
+    <dd>A sort direction meaning “large to small” (Z→A, 9→1).</dd>
+
+    <dt id="g-dependency">Dependency</dt>
+    <dd>Something the app relies on to function. Example: winget is a dependency; without it, Win98Get cannot list/search/install.</dd>
+
+    <dt id="g-dll">DLL</dt>
+    <dd>Dynamic Link Library. A compiled code library that apps load at runtime. .NET projects output DLLs during builds.</dd>
+
+    <dt id="g-dotnet">.NET</dt>
+    <dd>The runtime + libraries for C#. Win98Get is a .NET WinForms app.</dd>
+
+    <dt id="g-dotnet-runtime">.NET runtime</dt>
+    <dd>The runtime needed to execute .NET apps. When publishing self-contained, the runtime is included in the output.</dd>
+
+    <dt id="g-dotnet-tool">dotnet</dt>
+    <dd>The command-line tool used to build/run/publish .NET projects (example: <code>dotnet build</code>).</dd>
+
+    <dt id="g-dotnet-sdk">dotnet SDK</dt>
+    <dd>The developer toolchain that includes the compiler and build tools. You need the SDK to build, but not necessarily to run a self-contained published EXE.</dd>
+
+    <dt id="g-dpi">DPI</dt>
+    <dd>Dots per inch. A measurement related to display density. High DPI displays can make UI appear smaller unless scaling is applied.</dd>
+
+    <dt id="g-dpi-scaling">DPI scaling</dt>
+    <dd>OS behavior that scales UI sizes on high-DPI displays. This affects how big the sort glyph and controls appear.</dd>
+
+    <dt id="g-event">Event</dt>
+    <dd>A notification that something happened (button clicked, key pressed, grid selection changed). In C#, events are subscribed to with <code>+=</code>.</dd>
+
+    <dt id="g-event-handler">Event handler</dt>
+    <dd>A method (or lambda) that runs when an event fires. Example: <code>_searchButton.Click += ...</code> attaches a handler to run when the Search button is clicked.</dd>
+
+    <dt id="g-exception">Exception</dt>
+    <dd>An error object representing a failure. Exceptions can be caught with <code>try/catch</code>. We show errors to the user via MessageBox.</dd>
+
+    <dt id="g-exe">EXE</dt>
+    <dd>A Windows executable file. Publishing single-file produces an EXE you can run.</dd>
+
+    <dt id="g-executable">Executable</dt>
+    <dd>A runnable program file (like an EXE). Winget itself is an executable (<code>winget.exe</code>).</dd>
+
+    <dt id="g-escape">Escape / escaping</dt>
+    <dd>Making sure special characters are treated safely. Example: if a package id contains quotes, we escape them before passing to winget.</dd>
+
+    <dt id="g-exit-code">Exit code</dt>
+    <dd>An integer returned by a process on completion. Convention: 0 means success; non-zero means failure. We log exit codes like “winget exited with code X”.</dd>
+
+    <dt id="g-field">Field</dt>
+    <dd>A variable stored in a class instance. Fields often hold controls (like <code>_installedGrid</code>) or services (like <code>_winget</code>).</dd>
+
+    <dt id="g-file-path">File path</dt>
+    <dd>A string describing where a file is located. Windows paths often contain backslashes and drive letters.</dd>
+
+    <dt id="g-format">Format</dt>
+    <dd>The structure of text/data. Winget can output a table format (for humans) and sometimes JSON (for programs). We parse the table format.</dd>
+
+    <dt id="g-framework">Framework</dt>
+    <dd>A library ecosystem that provides structure and common functionality. WinForms is a UI framework within .NET.</dd>
+
+    <dt id="g-function">Function / method</dt>
+    <dd>A named block of code you can call. In C#, “method” is typically used for functions inside a class.</dd>
+
+    <dt id="g-gc">Garbage collector (GC)</dt>
+    <dd>The .NET memory manager that automatically frees objects that are no longer reachable. You typically do not free memory manually in C#.</dd>
+
+    <dt id="g-grid">Grid</dt>
+    <dd>A table-like UI element. In this project “grid” usually means a <code>DataGridView</code>.</dd>
+
+    <dt id="g-gui">GUI</dt>
+    <dd>Graphical User Interface: buttons, windows, menus, grids — things you click rather than type.</dd>
+
+    <dt id="g-handle">Handle (UI)</dt>
+    <dd>In Windows programming, a “handle” can mean an OS identifier for a resource. In event args, “Handled” often means “we processed/drew it ourselves” (example: custom header painting).</dd>
+
+    <dt id="g-hkcu">HKCU</dt>
+    <dd>HKEY_CURRENT_USER. A registry hive containing configuration for the current Windows user account.</dd>
+
+    <dt id="g-hklm">HKLM</dt>
+    <dd>HKEY_LOCAL_MACHINE. A registry hive containing machine-wide configuration. Uninstall keys often live here.</dd>
+
+    <dt id="g-http">HTTP</dt>
+    <dd>A web protocol used by browsers and web APIs. Mentioned mainly to clarify that Win98Get is not making HTTP requests; it runs local commands.</dd>
+
+    <dt id="g-index">Index</dt>
+    <dd>A numeric position in a list or string. Example: the parser uses character indexes to slice table columns.</dd>
+
+    <dt id="g-installer">Installer</dt>
+    <dd>A program that installs software, often showing UI windows. Winget can invoke installers; that’s why we keep winget interactive where appropriate.</dd>
+
+    <dt id="g-json">JSON</dt>
+    <dd>JavaScript Object Notation. A structured text format that is easier to parse reliably than human-formatted tables.</dd>
+
+    <dt id="g-keydown">KeyDown</dt>
+    <dd>A WinForms event fired when a key is pressed while a control has focus. We use it to detect Enter in the search box.</dd>
+
+    <dt id="g-linq">LINQ</dt>
+    <dd>Language Integrated Query: C# methods like <code>OrderBy</code>, <code>Count</code>, <code>Any</code> used to work with collections.</dd>
+
+    <dt id="g-library">Library</dt>
+    <dd>Reusable code packaged for use by other code. WinForms and System libraries are libraries within .NET.</dd>
+
+    <dt id="g-package">Package</dt>
+    <dd>An installable unit managed by winget. A package has an Id and often corresponds to an application.</dd>
+
+    <dt id="g-parameter">Parameter</dt>
+    <dd>A named input to a method. Example: in <code>SearchAsync(string query, ...)</code>, <code>query</code> is a parameter.</dd>
+
+    <dt id="g-parse">Parse</dt>
+    <dd>Convert text into structured data (objects). Example: parse winget’s table output into rows and then into <code>WingetPackage</code> objects.</dd>
+
+    <dt id="g-pixel">Pixel</dt>
+    <dd>The smallest display unit. Custom drawing (like the sort glyph triangle) uses pixel coordinates.</dd>
+
+    <dt id="g-portable">Portable app</dt>
+    <dd>An app that can run without an installer and may not register uninstall info in the registry. This can make “Show file location” best-effort.</dd>
+
+    <dt id="g-process">Process</dt>
+    <dd>A running instance of a program (example: a running <code>winget.exe</code>). Processes have an exit code when they finish.</dd>
+
+    <dt id="g-process-tree">Process tree</dt>
+    <dd>A process plus the child processes it spawned. We kill the entire tree on cancel to stop installers spawned by winget.</dd>
+
+    <dt id="g-project">Project (.csproj)</dt>
+    <dd>A .NET project file describing sources, target framework, and settings. The app project is <code>Win98Get.csproj</code>.</dd>
+
+    <dt id="g-property">Property</dt>
+    <dd>A class member that exposes a value, typically with getter/setter. Example: <code>WingetPackage.Id</code> is a property.</dd>
+
+    <dt id="g-publish">Publish</dt>
+    <dd>A build step that produces output intended to be deployed (copied) to run elsewhere. We publish a self-contained single EXE for Windows.</dd>
+
+    <dt id="g-quote">Quote / quoting</dt>
+    <dd>Using quotes to keep spaces inside a single argument. Example: <code>--id "Microsoft.PowerToys"</code>. Quoting is critical when values may contain spaces or special characters.</dd>
+
+    <dt id="g-relative-path">Relative path</dt>
+    <dd>A path interpreted relative to the current directory (example: <code>./scripts/publish-win-x64-singlefile.ps1</code>).</dd>
+
+    <dt id="g-rid">RID</dt>
+    <dd>Runtime Identifier (example: <code>win-x64</code>). Used by dotnet publish to choose OS/CPU target.</dd>
+
+    <dt id="g-row">Row</dt>
+    <dd>A horizontal entry in a grid. In our grids, each row corresponds to one <code>WingetPackage</code>.</dd>
+
+    <dt id="g-runtime">Runtime</dt>
+    <dd>The environment that executes code. For .NET apps this means the .NET runtime. For external tools, it means the OS process environment.</dd>
+
+    <dt id="g-self-contained">Self-contained</dt>
+    <dd>A publish mode where the output includes the .NET runtime. This reduces dependencies on the target machine, but increases file size.</dd>
+
+    <dt id="g-single-file">Single-file</dt>
+    <dd>A publish mode that bundles output into one EXE file. Internally, the runtime may extract files at runtime; “single file” means “single distributable file”.</dd>
+
+    <dt id="g-solution">Solution (.sln)</dt>
+    <dd>A Visual Studio solution file that groups projects together. It helps the IDE load the project structure.</dd>
+
+    <dt id="g-source">Source</dt>
+    <dd>Where winget retrieves package information from (example: community source, Microsoft Store). Some sources require agreement acceptance.</dd>
+
+    <dt id="g-stdout-stderr">stdout / stderr</dt>
+    <dd>Standard output and standard error: two text streams produced by a process. We capture and log both so errors are visible in the output log.</dd>
+
+    <dt id="g-string">String</dt>
+    <dd>A sequence of characters (text). In C#, strings are Unicode. Package Ids and names are strings.</dd>
+
+    <dt id="g-substring">Substring / slicing</dt>
+    <dd>Taking part of a string. The table parser slices text lines into column substrings based on indexes.</dd>
+
+    <dt id="g-tab">Tab</dt>
+    <dd>A UI section selectable via tab headers. This app has Installed and Search tabs.</dd>
+
+    <dt id="g-task">Task</dt>
+    <dd>A .NET type representing asynchronous work. Many async methods return a Task so callers can await them.</dd>
+
+    <dt id="g-terminal">Terminal</dt>
+    <dd>A text-based command window (like PowerShell) used to run commands such as <code>dotnet build</code>.</dd>
+
+    <dt id="g-textbox">TextBox</dt>
+    <dd>A UI control for displaying or editing text. The output log is a read-only multiline TextBox.</dd>
+
+    <dt id="g-theme">Theme</dt>
+    <dd>Styling rules for UI controls (colors, borders, rendering). We use system styles to resemble classic Windows.</dd>
+
+    <dt id="g-thread">Thread</dt>
+    <dd>An execution path within a process. WinForms has a special UI thread for input and painting.</dd>
+
+    <dt id="g-trim">Trim</dt>
+    <dd>Remove whitespace from the start and end of a string. We trim user search queries and parse outputs.</dd>
+
+    <dt id="g-ui-thread">UI thread</dt>
+    <dd>The thread that runs WinForms message processing and painting. Long operations must not block it, or the window becomes unresponsive.</dd>
+
+    <dt id="g-unicode">Unicode</dt>
+    <dd>A standard for representing text in many languages. .NET strings are Unicode, which is why they can represent many characters.</dd>
+
+    <dt id="g-whitespace">Whitespace</dt>
+    <dd>Invisible formatting characters like spaces and tabs. Table parsing relies on consistent whitespace placement.</dd>
+
+    <dt id="g-winforms">WinForms</dt>
+    <dd>Windows Forms: a Windows-only UI framework in .NET. It uses an event-driven model and a UI thread.</dd>
+
+    <dt id="g-winget">winget</dt>
+    <dd>Windows Package Manager. A CLI tool that can list/search/install/upgrade/uninstall packages. Win98Get runs winget and parses its output.</dd>
+
+    <dt id="g-wow6432node">WOW6432Node</dt>
+    <dd>A registry node that contains 32-bit application uninstall info on 64-bit Windows. We check it when resolving install locations.</dd>
+  </dl>
+
+  <h2 id="cs-punctuation">C# punctuation glossary (symbols)</h2>
+  <p>
+    This section explains C# punctuation and tiny syntax tokens that often confuse beginners.
+    Each token is shown exactly as you would see it in code.
+  </p>
+
+  <h3>Token index (click to jump)</h3>
+  <div class="cols">
+    <ul class="glossary-index">
+      <li><a href="#p-semicolon"><span class="token"><code>;</code></span></a></li>
+      <li><a href="#p-parens"><span class="token"><code>( )</code></span></a></li>
+      <li><a href="#p-braces"><span class="token"><code>{ }</code></span></a></li>
+      <li><a href="#p-brackets"><span class="token"><code>[ ]</code></span></a></li>
+      <li><a href="#p-angle-generic"><span class="token"><code>&lt;T&gt;</code></span></a></li>
+      <li><a href="#p-dot"><span class="token"><code>.</code></span></a></li>
+      <li><a href="#p-comma"><span class="token"><code>,</code></span></a></li>
+      <li><a href="#p-colon"><span class="token"><code>:</code></span></a></li>
+      <li><a href="#p-arrow"><span class="token"><code>=&gt;</code></span></a></li>
+      <li><a href="#p-plus-equals"><span class="token"><code>+=</code></span></a></li>
+      <li><a href="#p-null-coalescing"><span class="token"><code>??</code></span></a></li>
+      <li><a href="#p-null-conditional"><span class="token"><code>?.</code></span></a></li>
+      <li><a href="#p-null-forgiving"><span class="token"><code>!</code></span></a></li>
+      <li><a href="#p-underscore"><span class="token"><code>_name</code></span></a></li>
+      <li><a href="#p-string-quote"><span class="token"><code>"..."</code></span></a></li>
+      <li><a href="#p-interpolated"><span class="token"><code>$"..."</code></span></a></li>
+      <li><a href="#p-escaped-quote"><span class="token"><code>\"</code></span></a></li>
+      <li><a href="#p-line-comment"><span class="token"><code>//</code></span></a></li>
+    </ul>
+  </div>
+
+  <dl class="glossary">
+    <dt id="p-semicolon"><code>;</code> (semicolon)</dt>
+    <dd>Ends a statement. Think “end of this instruction”. Most C# statements end with a semicolon.</dd>
+
+    <dt id="p-parens"><code>( )</code> (parentheses)</dt>
+    <dd>Used for method calls and grouping. Example: <code>Cancel()</code> calls a method. In lambdas, parentheses can contain parameters: <code>(x, y) =&gt; ...</code>.</dd>
+
+    <dt id="p-braces"><code>{ }</code> (braces / curly braces)</dt>
+    <dd>Define a block (a grouped set of statements). Blocks appear in methods, if statements, loops, and object initializers.</dd>
+
+    <dt id="p-brackets"><code>[ ]</code> (brackets)</dt>
+    <dd>Used for arrays, indexers, and attributes. Example: arrays use <code>int[]</code>. Indexing uses <code>arr[0]</code>.</dd>
+
+    <dt id="p-angle-generic"><code>&lt;T&gt;</code> (generic type parameter)</dt>
+    <dd>Means “a type placeholder”. Example: <code>Task&lt;int&gt;</code> means “a Task that eventually produces an int”.</dd>
+
+    <dt id="p-dot"><code>.</code> (dot)</dt>
+    <dd>Member access. Example: <code>_searchButton.Click</code> accesses the Click event on a Button instance.</dd>
+
+    <dt id="p-comma"><code>,</code> (comma)</dt>
+    <dd>Separates items in lists: method arguments, array items, and tuple items.</dd>
+
+    <dt id="p-colon"><code>:</code> (colon)</dt>
+    <dd>Used in several contexts. Examples: base class specification (<code>class X : Form</code>) and switch expressions.</dd>
+
+    <dt id="p-arrow"><code>=&gt;</code> (lambda arrow)</dt>
+    <dd>Used in lambda expressions. Example: <code>p =&gt; p.Id</code> means “a function that takes p and returns p.Id”.</dd>
+
+    <dt id="p-plus-equals"><code>+=</code> (plus-equals)</dt>
+    <dd>Has multiple meanings. In general it can mean “add and assign” (numbers/strings). For events it means “subscribe”: <code>button.Click += Handler;</code> attaches a handler.</dd>
+
+    <dt id="p-null-coalescing"><code>??</code> (null-coalescing)</dt>
+    <dd>“If left side is null, use right side.” Example: <code>x ?? ""</code> ensures you get a non-null string.</dd>
+
+    <dt id="p-null-conditional"><code>?.</code> (null-conditional)</dt>
+    <dd>Access a member only if the object is not null. Example: <code>_loadCts?.Cancel()</code> means “if _loadCts is not null, call Cancel”.</dd>
+
+    <dt id="p-null-forgiving"><code>!</code> (null-forgiving operator)</dt>
+    <dd>Used to tell the compiler “I know this is not null here” when using nullable reference types. It does not change runtime behavior; it changes compiler warnings.</dd>
+
+    <dt id="p-underscore"><code>_name</code> (leading underscore)</dt>
+    <dd>A naming convention often used for private fields in C#. Example: <code>_winget</code> is a private field holding the WingetService.</dd>
+
+    <dt id="p-string-quote"><code>"..."</code> (string literal quotes)</dt>
+    <dd>Double quotes create a string literal. Example: <code>"Refresh"</code> is a string with the text Refresh.</dd>
+
+    <dt id="p-interpolated"><code>$"..."</code> (interpolated string)</dt>
+    <dd>Allows embedding expressions inside a string using <code>{...}</code>. Example: <code>$"Hello {name}"</code>.</dd>
+
+    <dt id="p-escaped-quote"><code>\"</code> (escaped quote)</dt>
+    <dd>Inside a normal C# string, <code>\"</code> represents a literal quote character. We use it when embedding values into quoted command arguments.</dd>
+
+    <dt id="p-line-comment"><code>//</code> (line comment)</dt>
+    <dd>Starts a comment that runs to the end of the line. Comments are ignored by the compiler and are for humans.</dd>
+  </dl>
+
+  <h2 id="deep-dive-basics">Deep dive: basics (computer + text)</h2>
+  <p>
+    This section defines extra “foundational” terms that are easy to assume, but very useful for beginners.
+  </p>
+  <ul>
+    <li><strong>Computer program</strong>: instructions executed by the CPU.</li>
+    <li><strong>Operating system (OS)</strong>: Windows is the OS here; it provides windows, processes, registry, files.</li>
+    <li><strong>File</strong>: a named chunk of data stored on disk.</li>
+    <li><strong>Folder / directory</strong>: container of files.</li>
+    <li><strong>Text</strong>: characters stored in a file or sent over stdout/stderr.</li>
+    <li><strong>Line</strong>: a row of text separated by newline characters (CRLF on Windows often).</li>
+    <li><strong>Newline</strong>: character(s) meaning “go to the next line” (<code>\r\n</code> on Windows).</li>
+    <li><strong>Table (text)</strong>: columns aligned by spaces so humans can read; not inherently machine-friendly.</li>
+  </ul>
+
+  <h2 id="deep-dive-dotnet">Deep dive: .NET + build + publish</h2>
+  <p>
+    This section explains what actually happens when you run <code>dotnet build</code> or <code>dotnet publish</code>.
+  </p>
+  <ul>
+    <li><strong>Compiler</strong>: turns C# source into IL inside assemblies.</li>
+    <li><strong>MSBuild</strong>: the build engine used by dotnet to build projects.</li>
+    <li><strong>Assembly</strong>: compiled output file (DLL or EXE) containing IL and metadata.</li>
+    <li><strong>Target framework</strong>: which APIs/runtime the project expects (example: <code>net10.0-windows</code>).</li>
+    <li><strong>Self-contained publish</strong>: includes the runtime so the app can run without installing .NET.</li>
+    <li><strong>Single-file publish</strong>: bundles output into one EXE; the runtime may extract parts internally.</li>
+    <li><strong>Native dependencies</strong>: non-.NET files some apps require (not a focus here, but relevant in general).</li>
+  </ul>
+
+  <h2 id="deep-dive-winforms">Deep dive: WinForms + UI thread</h2>
+  <p>
+    WinForms is event-driven: the OS sends messages (mouse clicks, key presses, paint requests),
+    and your code responds via event handlers.
+  </p>
+  <ul>
+    <li><strong>Message loop</strong>: internal loop that receives OS messages and dispatches events.</li>
+    <li><strong>Paint</strong>: drawing UI elements onto the screen when Windows asks (or when invalidated).</li>
+    <li><strong>Invalidate</strong>: request that a control be repainted.</li>
+    <li><strong>GDI+</strong>: Windows drawing system used by WinForms (lines, text, polygons).</li>
+    <li><strong>Brush</strong>: a drawing object used to fill shapes with color.</li>
+    <li><strong>Pen</strong>: a drawing object used to draw outlines/lines with color and thickness.</li>
+  </ul>
+
+  <h2 id="deep-dive-processes">Deep dive: processes + exit codes</h2>
+  <p>
+    Winget is an external process. Running it means starting <code>winget.exe</code> and interacting with its output.
+  </p>
+  <ul>
+    <li><strong>Standard output (stdout)</strong>: normal text output from a process.</li>
+    <li><strong>Standard error (stderr)</strong>: error text output from a process.</li>
+    <li><strong>Exit code</strong>: numeric result of process execution. Convention: 0 is success.</li>
+    <li><strong>Process termination</strong>: stopping a process. “Kill process tree” stops child processes too.</li>
+  </ul>
+
+  <h2 id="deep-dive-powershell">Deep dive: PowerShell + scripts</h2>
+  <p>
+    The repo includes PowerShell scripts for publishing.
+    PowerShell is both a shell (command runner) and a scripting language.
+  </p>
+  <ul>
+    <li><strong>PowerShell</strong>: Windows command shell + scripting language.</li>
+    <li><strong>Script</strong>: a text file containing commands (here: <code>.ps1</code>).</li>
+    <li><strong>Execution policy</strong>: Windows setting controlling whether scripts can run.</li>
+    <li><strong>Current directory</strong>: the folder your terminal is “in” when you run commands.</li>
+    <li><strong>Dot-slash (<code>./</code>)</strong>: means “from the current directory” in many shells.</li>
+  </ul>
+
+  <h2 id="repo">Repository layout</h2>
+  <p>
+    A repository (repo) is the project folder tracked by source control.
+    This repo contains code, scripts, and documentation.
+  </p>
+  <ul>
+    <li><code>Win98Get/</code>: the C# project that builds into Win98Get.exe.</li>
+    <li><code>docs/</code>: documentation files (including this HTML).</li>
+    <li><code>scripts/</code>: PowerShell scripts (automation).</li>
+    <li><code>win98get.sln</code>: Visual Studio solution file.</li>
+  </ul>
+
+  <h2 id="build-run-publish">Build / Run / Publish (what the commands mean)</h2>
+  <p>
+    People often use these words interchangeably, but they are different actions.
+  </p>
+  <ul>
+    <li><strong>Build</strong> means “compile the code”.</li>
+    <li><strong>Run</strong> means “launch the program so you can use it”.</li>
+    <li><strong>Publish</strong> means “produce output you can copy to another machine and run”.</li>
+  </ul>
+
+  <pre><code>dotnet build
+</code></pre>
+  <ul>
+    <li><code>dotnet</code>: the .NET SDK command-line tool.</li>
+    <li><code>build</code>: subcommand meaning compile the project.</li>
+  </ul>
+
+  <pre><code>dotnet run --project .\Win98Get
+</code></pre>
+  <ul>
+    <li><code>run</code>: build if needed, then execute the app.</li>
+    <li><code>--project</code>: pick the project folder.</li>
+  </ul>
+
+  <pre><code>./scripts/publish-win-x64-singlefile.ps1
+</code></pre>
+  <ul>
+    <li><code>.ps1</code>: PowerShell script file.</li>
+    <li><code>win-x64</code>: Windows 64-bit target platform (runtime identifier).</li>
+    <li><code>singlefile</code>: bundle publish output into one EXE.</li>
+    <li><strong>Important</strong>: single-file/self-contained refers to .NET runtime bundling, not winget bundling. Winget must still be installed.</li>
+  </ul>
+
+  <h2 id="architecture">Architecture (Big Picture)</h2>
+  <p>The project follows a simple “UI + service” structure:</p>
+  <ul>
+    <li><strong>UI layer</strong>: <code>MainForm</code> builds controls, handles events, and updates the UI.</li>
+    <li><strong>Service layer</strong>: <code>WingetService</code> runs winget commands and parses output into objects.</li>
+    <li><strong>Utilities</strong>: helpers like <code>ProcessRunner</code>, <code>WingetTableParser</code>, <code>InstallLocationResolver</code>.</li>
+    <li><strong>Model</strong>: <code>WingetPackage</code> represents a package row shown in a grid.</li>
+  </ul>
+  <p>
+    “Layering” is a design choice. It is not mandatory, but it helps keep responsibilities separated.
+    Example: UI code should not contain string-slicing parsing logic; that belongs in parsing utilities.
+  </p>
+
+  <h2 id="ui">UI: MainForm</h2>
+  <p>
+    <code>MainForm</code> is the main window. In WinForms, a “Form” is a window.
+    The UI is built in code (not in the Visual Designer). That means we call constructors like <code>new Button()</code>
+    and set properties like <code>Text</code>, <code>Dock</code>, and event handlers.
+  </p>
+
+  <h3>MainForm fields (what they represent)</h3>
+  <table>
+    <tr><th>Field</th><th>What it is</th><th>Why it exists</th></tr>
+    <tr><td><code>_winget</code></td><td>Instance of <code>WingetService</code></td><td>UI calls this to run winget commands.</td></tr>
+    <tr><td><code>_tabs</code>, <code>_installedTab</code>, <code>_searchTab</code></td><td>Tab controls</td><td>Splits the UI into Installed and Search sections.</td></tr>
+    <tr><td><code>_installedGrid</code>, <code>_searchGrid</code></td><td><code>DataGridView</code></td><td>Shows package rows with columns like Name/Id/Version.</td></tr>
+    <tr><td><code>_logBox</code></td><td>Multiline read-only TextBox</td><td>Shows verbose winget output. Persistent means we append and do not clear.</td></tr>
+    <tr><td><code>_loadCts</code>, <code>_descCts</code></td><td><code>CancellationTokenSource</code></td><td>Supports cancelling long operations (loads/actions) and description lookups.</td></tr>
+  </table>
+
+  <h3>MainForm methods (what each one does)</h3>
+  <p>
+    Methods are grouped by theme: initialization, loading data, running actions, and UI helpers.
+    The names often end in <code>Async</code> to indicate asynchronous work.
+  </p>
+  <table>
+    <tr><th>Method</th><th>Purpose</th><th>Explanation (verbose)</th></tr>
+    <tr>
+      <td><code>MainForm()</code></td>
+      <td>Constructor</td>
+      <td>
+        A constructor runs when you create a new instance of a class.
+        It sets up the form, builds the UI layout, wires events, and triggers initial loading on the “Shown” event.
+      </td>
+    </tr>
+    <tr>
+      <td><code>RefreshInstalledAsync()</code></td>
+      <td>Load installed list</td>
+      <td>
+        Calls the service to run <code>winget list</code> and to discover upgrades.
+        Then binds a list of <code>WingetPackage</code> objects to the installed DataGridView.
+      </td>
+    </tr>
+    <tr>
+      <td><code>RunSearchAsync()</code></td>
+      <td>Search packages</td>
+      <td>
+        Runs <code>winget search</code> with a query string, parses results, and binds them to the search grid.
+        The search textbox “Enter key” triggers this.
+      </td>
+    </tr>
+    <tr>
+      <td><code>RunWingetActionAsync(...)</code></td>
+      <td>Run install/upgrade/uninstall</td>
+      <td>
+        Shared helper that toggles the UI into “busy” state, runs the action, streams output to log, handles cancellation, then restores UI.
+      </td>
+    </tr>
+    <tr>
+      <td><code>CancelCurrentWork()</code></td>
+      <td>Cancel current operation</td>
+      <td>
+        Calls <code>Cancel()</code> on the active cancellation token source.
+        Also relies on ProcessRunner to terminate the winget process tree so cancellation is real, not just “requested”.
+      </td>
+    </tr>
+  </table>
+
+  <h2 id="sorting">Sorting + sort indicator (ASC/DESC)</h2>
+  <p>
+    Users can sort by clicking a column header.
+    “Sort” means reorder rows based on a column.
+    Example: sorting by Name means alphabetizing package names.
+  </p>
+  <ul>
+    <li>Click header once: ascending (A→Z). Click again: descending (Z→A).</li>
+    <li>We show a triangle indicator to communicate direction (up triangle = ASC, down triangle = DESC).</li>
+    <li>
+      We draw a custom glyph because the built-in DataGridView sort arrow can be faint.
+      We disable the built-in glyph to avoid seeing two arrows.
+    </li>
+  </ul>
+
+  <h2 id="services">Services</h2>
+  <h3>WingetService</h3>
+  <p>
+    <code>WingetService</code> is the “API” the UI layer calls.
+    Here “API” means “a set of functions we call” — not a web service.
+    It launches the external program <code>winget.exe</code>, reads stdout/stderr, and turns text into objects.
+  </p>
+  <table>
+    <tr><th>Method</th><th>Purpose</th><th>Notes (very explicit)</th></tr>
+    <tr>
+      <td><code>GetInstalledAsync(ct)</code></td>
+      <td>List installed packages</td>
+      <td>Runs <code>winget list</code>. Parses the table output using <code>WingetTableParser</code>.</td>
+    </tr>
+    <tr>
+      <td><code>SearchAsync(query, ct)</code></td>
+      <td>Search remote packages</td>
+      <td>Runs <code>winget search</code>. “Query” means the text the user typed.</td>
+    </tr>
+    <tr>
+      <td><code>InstallStreamingAsync(id, onLine, ct)</code></td>
+      <td>Install a package</td>
+      <td>
+        Runs <code>winget install --id &lt;id&gt;</code>. Streams each output line to a callback so we can append to the log in real time.
+      </td>
+    </tr>
+  </table>
+
+  <h3>ProcessRunner</h3>
+  <p>
+    A “process runner” is code that starts external processes.
+    We use it to run winget and collect output.
+  </p>
+  <ul>
+    <li><strong>RunCapture</strong>: run a command and return all output at once as strings.</li>
+    <li><strong>RunStreaming</strong>: run a command and call a callback for each output line.</li>
+    <li><strong>Cancellation</strong>: on cancellation, it kills the process tree to stop winget reliably.</li>
+  </ul>
+
+  <h3>WingetTableParser</h3>
+  <p>
+    This parser exists because winget prints a human-oriented text table.
+    Parsing strategy in plain English:
+  </p>
+  <ol>
+    <li>Find the header line (the line with column names like Name/Id/Version).</li>
+    <li>Find the dashed separator under the header. This indicates “table starts here”.</li>
+    <li>Compute where each column begins (character indexes).</li>
+    <li>Slice every following line into column substrings and trim whitespace.</li>
+  </ol>
+  <p>
+    “Whitespace” means spaces and tabs.
+    “Trim” means remove whitespace from the start and end of a string.
+  </p>
+
+  <h3>InstallLocationResolver</h3>
+  <p>
+    This is used for “Show file location” and “Run program” actions.
+    It looks in the Windows Registry uninstall keys for entries that match the selected package.
+    It is best-effort because:
+  </p>
+  <ul>
+    <li>Not all installers write a correct InstallLocation.</li>
+    <li>Display names might not match winget names exactly.</li>
+    <li>Some apps are “portable” and do not have registry entries.</li>
+  </ul>
+
+  <h2 id="models">Models</h2>
+  <h3>WingetPackage</h3>
+  <p>
+    A “model” here means “a data object that represents a concept in the app”.
+    The concept is “one package row shown in a grid”.
+  </p>
+  <ul>
+    <li><code>Name</code>: display name for humans.</li>
+    <li><code>Id</code>: stable identifier used with winget (<code>--id</code>).</li>
+    <li><code>Version</code>: installed version string (text).</li>
+    <li><code>AvailableVersion</code>: upgrade version string (text) if an upgrade is available.</li>
+    <li><code>Source</code>: winget source name (text).</li>
+    <li><code>Description</code>: description text (used on Search tab).</li>
+  </ul>
+
+  <h2 id="patterns">C# Patterns Used</h2>
+  <ul>
+    <li><strong>Async/await</strong>: keeps UI responsive by not blocking the UI thread.</li>
+    <li><strong>CancellationToken</strong>: makes cancellation explicit and consistent across operations.</li>
+    <li><strong>Events</strong>: WinForms uses events for user actions like clicks and key presses.</li>
+    <li><strong>Callbacks</strong>: used for streaming output lines into the log.</li>
+    <li><strong>Data binding</strong>: used to show lists in DataGridView without manual row management.</li>
+    <li><strong>LINQ</strong>: used for collection operations (counting, filtering, sorting).</li>
+  </ul>
+  <p>
+    “Pattern” means “common coding technique”. It is not magic — it is just a repeatable approach.
+  </p>
+
+  <h2 id="foreach">Mini-lesson: <code>foreach (var x in new[] { 1, 2, 3 })</code></h2>
+  <p>
+    This is C#’s “loop over items in a collection” syntax.
+    It is conceptually similar to Python’s <code>for x in [1, 2, 3]</code>.
+  </p>
+
+  <h3>What it means</h3>
+  <pre><code>foreach (var x in new[] { 1, 2, 3 })
+{
+    Console.WriteLine("The value of x is " + x);
+}
+</code></pre>
+  <ul>
+    <li><code>new[] { 1, 2, 3 }</code>: creates an array. “Array” means a fixed-size ordered collection.</li>
+    <li><code>var x</code>: compiler infers the static type of <code>x</code>. Here it becomes <code>int</code>.</li>
+    <li><code>Console.WriteLine</code>: writes a line to the console. In GUI apps, this is mostly for debugging.</li>
+    <li><code>"..."</code>: a string literal (a hard-coded string value).</li>
+  </ul>
+
+  <h3>Equivalent longer version</h3>
+  <pre><code>int[] numbers = new int[] { 1, 2, 3 };
+foreach (int x in numbers)
+{
+    Console.WriteLine("The value of x is " + x);
+}
+</code></pre>
+
+  <h3>Python comparison</h3>
+  <pre><code># Python
+for x in [1, 2, 3]:
+    print("The value of x is " + str(x))
+</code></pre>
+
+  <h2 id="winget-commands">Winget commands (line-by-line)</h2>
+  <p>
+    This section documents the <em>exact</em> winget commands Win98Get runs.
+    “Exact” means “the exact arguments we pass to <code>ProcessStartInfo.Arguments</code> in
+    <code>Win98Get/Services/WingetService.cs</code>”.
+  </p>
+  <div class="note">
+    <strong>Important:</strong> some commands are “capture” commands (we read their output into memory),
+    and some are “streaming” commands (we stream output line-by-line into the Output Log).
+  </div>
+
+  <h3>0) winget executable name</h3>
+  <p>
+    We run winget by using the executable name <code>winget</code> (not a full path).
+    Windows resolves this via the PATH search.
+  </p>
+
+  <h3>1) Availability check (startup)</h3>
+  <pre><code>winget --version</code></pre>
+  <table>
+    <tr><th>Part</th><th>Meaning</th></tr>
+    <tr><td><code>winget</code></td><td>Run the Windows Package Manager CLI.</td></tr>
+    <tr><td><code>--version</code></td><td>Print the winget version and exit. We treat exit code 0 as “available”.</td></tr>
+  </table>
+  <p>
+    In code, this check uses a 5-second timeout. If it times out, we treat it as “not available” and show an error.
+  </p>
+
+  <h3>2) List installed packages (Installed tab)</h3>
+  <pre><code>winget list</code></pre>
+  <table>
+    <tr><th>Part</th><th>Meaning</th></tr>
+    <tr><td><code>list</code></td><td>List installed packages. Winget prints a human-formatted table; we parse that table.</td></tr>
+  </table>
+
+  <h3>3) List upgrades available (Installed tab: “Available” column)</h3>
+  <pre><code>winget upgrade</code></pre>
+  <p>
+    If that fails (non-zero exit code), we try a fallback:
+  </p>
+  <pre><code>winget upgrade --accept-source-agreements</code></pre>
+  <table>
+    <tr><th>Part</th><th>Meaning</th></tr>
+    <tr><td><code>upgrade</code></td><td>List packages with available upgrades (or perform upgrades with extra flags).</td></tr>
+    <tr><td><code>--accept-source-agreements</code></td><td>Auto-accept source agreements if winget requires them before listing/upgrading.</td></tr>
+  </table>
+  <p>
+    If both forms fail, Win98Get treats that as “no upgrades” rather than crashing.
+  </p>
+
+  <h3>4) Search packages (Search tab)</h3>
+  <pre><code>winget search "{query}" --accept-source-agreements</code></pre>
+  <table>
+    <tr><th>Part</th><th>Meaning</th></tr>
+    <tr><td><code>search</code></td><td>Search for packages matching the query text.</td></tr>
+    <tr><td><code>"{query}"</code></td><td>The query string, wrapped in quotes so spaces stay part of one argument.</td></tr>
+    <tr><td><code>--accept-source-agreements</code></td><td>Auto-accept source agreements to avoid interactive prompts.</td></tr>
+  </table>
+  <p>
+    <strong>Escaping rule used by Win98Get:</strong> we take the user’s query and replace any literal <code>"</code>
+    characters with <code>\"</code> (a backslash + quote) so the quoted argument remains syntactically valid.
+    This is done in C# before creating the full argument string.
+  </p>
+
+  <h3>5) Show package details to get a description (Search tab description panel)</h3>
+  <pre><code>winget show --id "{id}" --accept-source-agreements</code></pre>
+  <table>
+    <tr><th>Part</th><th>Meaning</th></tr>
+    <tr><td><code>show</code></td><td>Show detailed information for a package.</td></tr>
+    <tr><td><code>--id</code></td><td>Tell winget we’re identifying the package by Id (not by name).</td></tr>
+    <tr><td><code>"{id}"</code></td><td>The package Id value, quoted and escaped the same way as the search query.</td></tr>
+    <tr><td><code>--accept-source-agreements</code></td><td>Auto-accept source agreements if required.</td></tr>
+  </table>
+  <p>
+    We parse the output by looking for a field that starts with <code>Description:</code> and then reading the
+    following indented continuation lines.
+  </p>
+
+  <h3>6) Install a package (Search tab)</h3>
+  <pre><code>winget install --id "{id}" --accept-source-agreements --accept-package-agreements</code></pre>
+  <table>
+    <tr><th>Part</th><th>Meaning</th></tr>
+    <tr><td><code>install</code></td><td>Install the selected package.</td></tr>
+    <tr><td><code>--id</code></td><td>Use the package Id as the selection key.</td></tr>
+    <tr><td><code>--accept-source-agreements</code></td><td>Accept source agreements automatically.</td></tr>
+    <tr><td><code>--accept-package-agreements</code></td><td>Accept license/package agreements automatically.</td></tr>
+  </table>
+  <p>
+    This command is run in “streaming” mode: we attach to stdout/stderr and append each line to the Output Log.
+  </p>
+
+  <h3>7) Upgrade one selected package (Installed tab)</h3>
+  <pre><code>winget upgrade --id "{id}" --accept-source-agreements --accept-package-agreements</code></pre>
+  <p>
+    Same flags as install, but the verb is <code>upgrade</code>.
+  </p>
+
+  <h3>8) Upgrade all packages (Installed tab: “Install all updates”)</h3>
+  <pre><code>winget upgrade --all --accept-source-agreements --accept-package-agreements</code></pre>
+  <table>
+    <tr><th>Part</th><th>Meaning</th></tr>
+    <tr><td><code>--all</code></td><td>Upgrade all applicable packages (instead of a single Id).</td></tr>
+  </table>
+
+  <h3>9) Uninstall one selected package (Installed tab)</h3>
+  <pre><code>winget uninstall --id "{id}"</code></pre>
+  <table>
+    <tr><th>Part</th><th>Meaning</th></tr>
+    <tr><td><code>uninstall</code></td><td>Uninstall the selected package.</td></tr>
+    <tr><td><code>--id</code></td><td>Use the package Id as the selection key.</td></tr>
+  </table>
+  <p>
+    Uninstall does not include the agreement flags in our implementation.
+    It is still run in streaming mode so you see the uninstall progress.
+  </p>
+
+  <h2 id="winforms-events">WinForms events we hook (line-by-line)</h2>
+  <p>
+    WinForms is event-driven: the framework calls your code in response to user actions
+    (clicks, key presses) and UI lifecycle events (Shown, painting).
+    This section lists the exact event subscriptions used by Win98Get.
+  </p>
+
+  <h3>1) Form lifecycle: Shown</h3>
+  <pre><code>Shown += async (_, _) =&gt; await OnShownAsync();</code></pre>
+  <ul>
+    <li><strong>What triggers it:</strong> the first time the window is shown on screen.</li>
+    <li><strong>Why we use it:</strong> it is a good “startup point” after the form is created and the message loop is running.</li>
+    <li><strong>What it does:</strong> checks winget availability and then loads the Installed list.</li>
+  </ul>
+
+  <h3>2) MenuStrip events</h3>
+  <pre><code>_fileRefresh.Click += async (_, _) =&gt; await RefreshInstalledAsync();
+_fileInstallAll.Click += async (_, _) =&gt; await UpgradeAllAsync();
+_fileQuit.Click += (_, _) =&gt; Close();
+_helpAbout.Click += (_, _) =&gt; ShowAbout();
+
+_viewOutputLog.CheckedChanged += (_, _) =&gt; ToggleOutputLog(_viewOutputLog.Checked);</code></pre>
+  <ul>
+    <li><strong>Click:</strong> runs when the user clicks that menu item.</li>
+    <li><strong>CheckedChanged:</strong> runs when the check state changes (used to show/hide the Output Log panel).</li>
+  </ul>
+
+  <h3>3) Button Click events (Installed tab)</h3>
+  <pre><code>_refreshButton.Click += async (_, _) =&gt; await RefreshInstalledAsync();
+_updateButton.Click += async (_, _) =&gt; await UpgradeSelectedInstalledAsync();
+_installAllUpdatesButton.Click += async (_, _) =&gt; await UpgradeAllAsync();
+_uninstallButton.Click += async (_, _) =&gt; await UninstallSelectedInstalledAsync();
+_cancelInstalledButton.Click += (_, _) =&gt; CancelCurrentWork();</code></pre>
+  <ul>
+    <li><strong>What triggers it:</strong> user clicks the button (or activates it via keyboard).</li>
+    <li><strong>Why async:</strong> the command calls winget; we do not want to freeze the UI thread.</li>
+    <li><strong>Cancel behavior:</strong> cancels the current CTS and kills the winget process tree.</li>
+  </ul>
+
+  <h3>4) Grid events (Installed tab)</h3>
+  <pre><code>_installedGrid.SelectionChanged += (_, _) =&gt; UpdateInstalledButtons();
+_installedGrid.ColumnHeaderMouseClick += (_, e) =&gt; SortGrid(_installedGrid, e.ColumnIndex);
+_installedGrid.CellPainting += Grid_CellPainting;
+_installedGrid.CellMouseDown += InstalledGrid_CellMouseDown;</code></pre>
+  <ul>
+    <li><strong>SelectionChanged:</strong> runs when the selected row changes; we enable/disable actions based on selection.</li>
+    <li><strong>ColumnHeaderMouseClick:</strong> runs when the user clicks a header; we toggle ascending/descending and sort the underlying list.</li>
+    <li><strong>CellPainting:</strong> runs during drawing; we custom-draw the header sort glyph (Win98-style arrow) and mark it handled.</li>
+    <li><strong>CellMouseDown:</strong> used to ensure right-click selects the row under the cursor before showing the context menu.</li>
+  </ul>
+
+  <h3>5) Search box: KeyDown (Enter triggers search)</h3>
+  <pre><code>_searchBox.KeyDown += async (_, e) =&gt;
+{
+    if (e.KeyCode == Keys.Enter)
+    {
+        e.Handled = true;
+        e.SuppressKeyPress = true;
+        await RunSearchAsync();
+    }
+};</code></pre>
+  <ul>
+    <li><strong>KeyDown:</strong> runs when a key is pressed while the search textbox has focus.</li>
+    <li><strong>e.Handled:</strong> tells WinForms we handled the key.</li>
+    <li><strong>e.SuppressKeyPress:</strong> prevents the “ding” / default textbox behavior for Enter.</li>
+    <li><strong>RunSearchAsync:</strong> runs <code>winget search</code> and updates the Search grid.</li>
+  </ul>
+
+  <h3>6) Search tab button Click events</h3>
+  <pre><code>_searchButton.Click += async (_, _) =&gt; await RunSearchAsync();
+_cancelSearchButton.Click += (_, _) =&gt; CancelCurrentWork();
+_installButton.Click += async (_, _) =&gt; await InstallSelectedSearchAsync();</code></pre>
+
+  <h3>7) Grid events (Search tab)</h3>
+  <pre><code>_searchGrid.SelectionChanged += async (_, _) =&gt; await LoadSelectedDescriptionAsync();
+_searchGrid.ColumnHeaderMouseClick += (_, e) =&gt; SortGrid(_searchGrid, e.ColumnIndex);
+_searchGrid.CellPainting += Grid_CellPainting;
+_searchGrid.CellMouseDown += SearchGrid_CellMouseDown;</code></pre>
+  <ul>
+    <li><strong>SelectionChanged:</strong> loads a description for the selected Id via <code>winget show</code>.</li>
+    <li><strong>The rest:</strong> same reasons as the Installed grid (sorting + right-click selection + custom glyph painting).</li>
+  </ul>
+
+  <h3>8) Context menu: Opening</h3>
+  <pre><code>menu.Opening += (_, _) =&gt;
+{
+    var pkg = GetSelectedPackage(_installedGrid);
+    var has = pkg is not null;
+    installUpdate.Enabled = has &amp;&amp; pkg!.HasUpgradeAvailable;
+    uninstall.Enabled = has;
+    showDetails.Enabled = has;
+    showLocation.Enabled = has;
+    runProgram.Enabled = has;
+    copyId.Enabled = has;
+    copyName.Enabled = has;
+};</code></pre>
+  <ul>
+    <li><strong>What triggers it:</strong> right before the context menu opens.</li>
+    <li><strong>Why we use it:</strong> so menu items are enabled/disabled correctly for the current selection.</li>
+  </ul>
+
+  <h3>9) Process output streaming: OutputDataReceived / ErrorDataReceived</h3>
+  <p>
+    These are events on <code>System.Diagnostics.Process</code>, used in <code>Win98Get/Services/ProcessRunner.cs</code>
+    to stream winget output into the UI log.
+  </p>
+  <pre><code>process.OutputDataReceived += (_, e) =&gt;
+{
+    if (e.Data is not null)
+    {
+        onOutputLine(e.Data);
+    }
+};
+
+process.ErrorDataReceived += (_, e) =&gt;
+{
+    if (e.Data is not null)
+    {
+        onOutputLine(e.Data);
+    }
+};</code></pre>
+  <ul>
+    <li><strong>OutputDataReceived:</strong> fires when a line appears on stdout.</li>
+    <li><strong>ErrorDataReceived:</strong> fires when a line appears on stderr.</li>
+    <li><strong>Why we forward both:</strong> users should see errors in the log, not lose them.</li>
+    <li><strong>Thread note:</strong> these events are not guaranteed to run on the UI thread; the UI code must marshal safely when appending to controls.</li>
+  </ul>
+
+  <h2 id="troubleshooting">Troubleshooting (common questions)</h2>
+
+  <h3>“Why does it need winget installed?”</h3>
+  <p>
+    Because Win98Get is a wrapper. It calls winget rather than implementing a package manager.
+    If winget is missing, Win98Get cannot perform list/search/install/upgrade/uninstall.
+  </p>
+
+  <h3>“Why can’t we publish a Linux build?”</h3>
+  <p>
+    WinForms is Windows-only, and winget is Windows-only.
+    A Linux build would require different UI technology (cross-platform) and a different backend package manager.
+  </p>
+
+  <h3>“Why doesn’t Cancel stop instantly every time?”</h3>
+  <p>
+    Cancellation is cooperative: we request cancellation, then we also kill the winget process tree.
+    However, installers spawned by winget may take time to exit.
+    “Instant” is not always possible if an external installer is still shutting down.
+  </p>
+
+  <h3>“What does ‘self-contained single EXE’ mean?”</h3>
+  <p>
+    Self-contained: includes the .NET runtime in the published output.
+    Single EXE: bundles the published output into one file.
+    It does not bundle winget — winget is still a separate dependency.
+  </p>
+
+  <hr />
+  <p class="muted">Internal document. Update this when adding features or introducing new terminology that needs to be defined.</p>
+</body>
+</html>

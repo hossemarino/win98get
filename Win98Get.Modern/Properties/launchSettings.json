@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Win98Get.Modern (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Win98Get.Modern (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

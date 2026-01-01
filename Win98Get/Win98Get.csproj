@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Win98Get.Core\Win98Get.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Models\WingetPackage.cs" />
+    <Compile Remove="Services\WingetService.cs" />
+    <Compile Remove="Services\WingetTableParser.cs" />
+    <Compile Remove="Services\ProcessRunner.cs" />
+    <Compile Remove="Services\InstallLocationResolver.cs" />
+  </ItemGroup>
+
+</Project>
