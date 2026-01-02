@@ -31,6 +31,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _helpWingetTroubleshooting = new() { Text = "WinGet Troubleshooting (Microsoft Learn)" };
     private readonly ToolStripMenuItem _helpWingetExport = new() { Text = "WinGet Export (Microsoft Learn)" };
     private readonly ToolStripMenuItem _helpWingetImport = new() { Text = "WinGet Import (Microsoft Learn)" };
+    private readonly ToolStripMenuItem _helpWingetRepair = new() { Text = "WinGet Repair (Microsoft Learn)" };
     private readonly ToolStripMenuItem _helpAbout = new() { Text = "About" };
 
     private readonly TabControl _tabs = new();
@@ -204,6 +205,7 @@ public sealed class MainForm : Form
         _helpWingetTroubleshooting.Click += (_, _) => OpenUrl("https://learn.microsoft.com/en-us/windows/package-manager/winget/troubleshooting");
         _helpWingetExport.Click += (_, _) => OpenUrl("https://aka.ms/winget-command-export");
         _helpWingetImport.Click += (_, _) => OpenUrl("https://aka.ms/winget-command-import");
+        _helpWingetRepair.Click += (_, _) => OpenUrl("https://aka.ms/winget-command-repair");
         _helpAbout.Click += (_, _) => ShowAbout();
 
         _viewOutputLog.CheckedChanged += (_, _) => ToggleOutputLog(_viewOutputLog.Checked);
@@ -231,6 +233,7 @@ public sealed class MainForm : Form
         _helpMenu.DropDownItems.Add(_helpWingetTroubleshooting);
         _helpMenu.DropDownItems.Add(_helpWingetExport);
         _helpMenu.DropDownItems.Add(_helpWingetImport);
+        _helpMenu.DropDownItems.Add(_helpWingetRepair);
         _helpMenu.DropDownItems.Add(new ToolStripSeparator());
         _helpMenu.DropDownItems.Add(_helpAbout);
 
@@ -793,6 +796,41 @@ public sealed class MainForm : Form
         await RefreshInstalledAsync();
     }
 
+    private async Task RepairSelectedInstalledAsync()
+    {
+        var pkg = GetSelectedPackage(_installedGrid);
+        if (pkg is null)
+        {
+            return;
+        }
+
+        var prompt = $"Repair:\n\n{pkg.Name}\n{pkg.Id}\n\nProceed?";
+        if (MessageBox.Show(this, prompt, "Win98Get", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        AppendLog($"> winget repair --id {pkg.Id} --exact".TrimEnd());
+        await RunWingetActionWithOperationFormAsync(
+            $"Repairing {pkg.Id}…",
+            () =>
+            {
+                var f = new OperationForm();
+                f.SetOperation("Repair", pkg.Name, pkg.Id, pkg.Version, "--exact");
+                return f;
+            },
+            (ct, form) => _winget.RepairByIdStreamingAsync(
+                packageId: pkg.Id,
+                onOutputLine: line =>
+                {
+                    form.OnOutputLine(line);
+                    AppendLogRaw(line);
+                },
+                cancellationToken: ct));
+
+        await RefreshInstalledAsync();
+    }
+
     private async Task UpgradeAllAsync()
     {
         var pkgs = GetInstalledPackagesFromGrid();
@@ -1246,6 +1284,9 @@ public sealed class MainForm : Form
         var installUpdate = new ToolStripMenuItem("Install update") { Enabled = false };
         installUpdate.Click += async (_, _) => await UpgradeSelectedInstalledAsync();
 
+        var repair = new ToolStripMenuItem("Repair") { Enabled = false };
+        repair.Click += async (_, _) => await RepairSelectedInstalledAsync();
+
         var uninstall = new ToolStripMenuItem("Uninstall");
         uninstall.Click += async (_, _) => await UninstallSelectedInstalledAsync();
 
@@ -1269,6 +1310,7 @@ public sealed class MainForm : Form
             var pkg = GetSelectedPackage(_installedGrid);
             var has = pkg is not null;
             installUpdate.Enabled = has && pkg!.HasUpgradeAvailable;
+            repair.Enabled = has;
             uninstall.Enabled = has;
             showDetails.Enabled = has;
             showLocation.Enabled = has;
@@ -1278,6 +1320,7 @@ public sealed class MainForm : Form
         };
 
         menu.Items.Add(installUpdate);
+        menu.Items.Add(repair);
         menu.Items.Add(uninstall);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(showDetails);

@@ -282,6 +282,71 @@ public sealed class WingetService
         return RunWingetStreamingAsync(args, onOutputLine, cancellationToken);
     }
 
+    public Task<int> RepairByIdStreamingAsync(string packageId, Action<string> onOutputLine, CancellationToken cancellationToken)
+        => RepairByIdStreamingAsync(packageId, additionalArgs: null, onOutputLine, cancellationToken);
+
+    public Task<int> RepairByIdStreamingAsync(string packageId, string? additionalArgs, Action<string> onOutputLine, CancellationToken cancellationToken)
+    {
+        packageId = (packageId ?? string.Empty).Trim();
+        if (packageId.Length == 0)
+        {
+            throw new ArgumentException("Package Id is required.", nameof(packageId));
+        }
+
+        var safeId = packageId.Replace("\"", "\\\"");
+
+        // `winget repair` supports filtering by --id. Use --exact to avoid partial matches.
+        var args = $"repair --id \"{safeId}\" --exact --accept-source-agreements --accept-package-agreements";
+        if (!string.IsNullOrWhiteSpace(additionalArgs))
+        {
+            args += " " + additionalArgs.Trim();
+        }
+
+        return RunWingetStreamingAsync(args, onOutputLine, cancellationToken);
+    }
+
+    public Task<int> RepairByQueryStreamingAsync(string query, Action<string> onOutputLine, CancellationToken cancellationToken)
+        => RepairByQueryStreamingAsync(query, additionalArgs: null, onOutputLine, cancellationToken);
+
+    public Task<int> RepairByQueryStreamingAsync(string query, string? additionalArgs, Action<string> onOutputLine, CancellationToken cancellationToken)
+    {
+        query = (query ?? string.Empty).Trim();
+        if (query.Length == 0)
+        {
+            throw new ArgumentException("Query is required.", nameof(query));
+        }
+
+        var safeQuery = query.Replace("\"", "\\\"");
+        var args = $"repair -q \"{safeQuery}\" --accept-source-agreements --accept-package-agreements";
+        if (!string.IsNullOrWhiteSpace(additionalArgs))
+        {
+            args += " " + additionalArgs.Trim();
+        }
+
+        return RunWingetStreamingAsync(args, onOutputLine, cancellationToken);
+    }
+
+    public Task<int> RepairByManifestStreamingAsync(string manifestPath, Action<string> onOutputLine, CancellationToken cancellationToken)
+        => RepairByManifestStreamingAsync(manifestPath, additionalArgs: null, onOutputLine, cancellationToken);
+
+    public Task<int> RepairByManifestStreamingAsync(string manifestPath, string? additionalArgs, Action<string> onOutputLine, CancellationToken cancellationToken)
+    {
+        manifestPath = (manifestPath ?? string.Empty).Trim();
+        if (manifestPath.Length == 0)
+        {
+            throw new ArgumentException("Manifest path is required.", nameof(manifestPath));
+        }
+
+        var safePath = manifestPath.Replace("\"", "\\\"");
+        var args = $"repair -m \"{safePath}\" --accept-source-agreements --accept-package-agreements";
+        if (!string.IsNullOrWhiteSpace(additionalArgs))
+        {
+            args += " " + additionalArgs.Trim();
+        }
+
+        return RunWingetStreamingAsync(args, onOutputLine, cancellationToken);
+    }
+
     private static Task<int> RunWingetStreamingAsync(string args, Action<string> onOutputLine, CancellationToken cancellationToken)
         => ProcessRunner.RunStreamingAsync(WingetExe, args, onOutputLine, cancellationToken);
 
