@@ -18,6 +18,8 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _helpMenu = new() { Text = "Help" };
     private readonly ToolStripMenuItem _fileRefresh = new() { Text = "Refresh" };
     private readonly ToolStripMenuItem _fileInstallAll = new() { Text = "Install all updates" };
+    private readonly ToolStripMenuItem _fileExportPackages = new() { Text = "Export package list..." };
+    private readonly ToolStripMenuItem _fileImportPackages = new() { Text = "Import package list..." };
     private readonly ToolStripMenuItem _fileSettings = new() { Text = "Settings..." };
     private readonly ToolStripMenuItem _fileRestartAdmin = new() { Text = "Restart as Administrator" };
     private readonly ToolStripMenuItem _fileQuit = new() { Text = "Quit" };
@@ -27,6 +29,8 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _themeWin98 = new() { Text = "Windows 98" };
     private readonly ToolStripMenuItem _helpWingetOverview = new() { Text = "WinGet Overview (Microsoft Learn)" };
     private readonly ToolStripMenuItem _helpWingetTroubleshooting = new() { Text = "WinGet Troubleshooting (Microsoft Learn)" };
+    private readonly ToolStripMenuItem _helpWingetExport = new() { Text = "WinGet Export (Microsoft Learn)" };
+    private readonly ToolStripMenuItem _helpWingetImport = new() { Text = "WinGet Import (Microsoft Learn)" };
     private readonly ToolStripMenuItem _helpAbout = new() { Text = "About" };
 
     private readonly TabControl _tabs = new();
@@ -191,11 +195,15 @@ public sealed class MainForm : Form
 
         _fileRefresh.Click += async (_, _) => await RefreshInstalledAsync();
         _fileInstallAll.Click += async (_, _) => await UpgradeAllAsync();
+        _fileExportPackages.Click += async (_, _) => await ExportPackagesAsync();
+        _fileImportPackages.Click += async (_, _) => await ImportPackagesAsync();
         _fileSettings.Click += (_, _) => ShowSettings();
         _fileRestartAdmin.Click += (_, _) => RestartAsAdministrator();
         _fileQuit.Click += (_, _) => Close();
         _helpWingetOverview.Click += (_, _) => OpenUrl("https://learn.microsoft.com/en-us/windows/package-manager/winget/");
         _helpWingetTroubleshooting.Click += (_, _) => OpenUrl("https://learn.microsoft.com/en-us/windows/package-manager/winget/troubleshooting");
+        _helpWingetExport.Click += (_, _) => OpenUrl("https://aka.ms/winget-command-export");
+        _helpWingetImport.Click += (_, _) => OpenUrl("https://aka.ms/winget-command-import");
         _helpAbout.Click += (_, _) => ShowAbout();
 
         _viewOutputLog.CheckedChanged += (_, _) => ToggleOutputLog(_viewOutputLog.Checked);
@@ -205,6 +213,9 @@ public sealed class MainForm : Form
 
         _fileMenu.DropDownItems.Add(_fileRefresh);
         _fileMenu.DropDownItems.Add(_fileInstallAll);
+        _fileMenu.DropDownItems.Add(new ToolStripSeparator());
+        _fileMenu.DropDownItems.Add(_fileExportPackages);
+        _fileMenu.DropDownItems.Add(_fileImportPackages);
         _fileMenu.DropDownItems.Add(new ToolStripSeparator());
         _fileMenu.DropDownItems.Add(_fileSettings);
         _fileMenu.DropDownItems.Add(_fileRestartAdmin);
@@ -218,6 +229,8 @@ public sealed class MainForm : Form
 
         _helpMenu.DropDownItems.Add(_helpWingetOverview);
         _helpMenu.DropDownItems.Add(_helpWingetTroubleshooting);
+        _helpMenu.DropDownItems.Add(_helpWingetExport);
+        _helpMenu.DropDownItems.Add(_helpWingetImport);
         _helpMenu.DropDownItems.Add(new ToolStripSeparator());
         _helpMenu.DropDownItems.Add(_helpAbout);
 
@@ -227,6 +240,89 @@ public sealed class MainForm : Form
         _menu.Items.Add(_helpMenu);
 
         MainMenuStrip = _menu;
+    }
+
+    private async Task ExportPackagesAsync()
+    {
+        using var sfd = new SaveFileDialog
+        {
+            Title = "Export package list",
+            Filter = "WinGet export (*.json)|*.json|All files (*.*)|*.*",
+            DefaultExt = "json",
+            AddExtension = true,
+            FileName = "winget-export.json",
+            OverwritePrompt = true,
+        };
+
+        if (sfd.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(sfd.FileName))
+        {
+            return;
+        }
+
+        var outPath = sfd.FileName;
+        var args = "-o \"" + outPath.Replace("\"", "\\\"") + "\" --accept-source-agreements";
+        AppendLog($"> winget export {args}");
+
+        await RunWingetActionWithOperationFormAsync(
+            "Exporting package list…",
+            () =>
+            {
+                var f = new OperationForm();
+                f.SetOperation("Export", "(installed packages)", outPath, string.Empty, "--accept-source-agreements");
+                return f;
+            },
+            (ct, form) => _winget.ExportStreamingAsync(
+                outputPath: outPath,
+                onOutputLine: line =>
+                {
+                    form.OnOutputLine(line);
+                    AppendLogRaw(line);
+                },
+                cancellationToken: ct));
+    }
+
+    private async Task ImportPackagesAsync()
+    {
+        using var ofd = new OpenFileDialog
+        {
+            Title = "Import package list",
+            Filter = "WinGet export (*.json)|*.json|All files (*.*)|*.*",
+            Multiselect = false,
+            CheckFileExists = true,
+            CheckPathExists = true,
+        };
+
+        if (ofd.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(ofd.FileName))
+        {
+            return;
+        }
+
+        var inPath = ofd.FileName;
+        var prompt = $"Import packages from file?\n\n{inPath}\n\nThis will install packages listed in the file. Proceed?";
+        if (MessageBox.Show(this, prompt, "Win98Get", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        var args = "-i \"" + inPath.Replace("\"", "\\\"") + "\" --accept-source-agreements --accept-package-agreements";
+        AppendLog($"> winget import {args}");
+
+        await RunWingetActionWithOperationFormAsync(
+            "Importing package list…",
+            () =>
+            {
+                var f = new OperationForm();
+                f.SetOperation("Import", "(package list)", inPath, string.Empty, "--accept-source-agreements --accept-package-agreements");
+                return f;
+            },
+            (ct, form) => _winget.ImportStreamingAsync(
+                importFile: inPath,
+                onOutputLine: line =>
+                {
+                    form.OnOutputLine(line);
+                    AppendLogRaw(line);
+                },
+                cancellationToken: ct));
     }
 
     private static void OpenUrl(string url)

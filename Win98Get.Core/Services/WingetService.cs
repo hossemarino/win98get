@@ -238,6 +238,50 @@ public sealed class WingetService
         return RunWingetStreamingAsync(args, onOutputLine, cancellationToken);
     }
 
+    public Task<int> ExportStreamingAsync(string outputPath, Action<string> onOutputLine, CancellationToken cancellationToken)
+        => ExportStreamingAsync(outputPath, additionalArgs: null, onOutputLine, cancellationToken);
+
+    public Task<int> ExportStreamingAsync(string outputPath, string? additionalArgs, Action<string> onOutputLine, CancellationToken cancellationToken)
+    {
+        outputPath = (outputPath ?? string.Empty).Trim();
+        if (outputPath.Length == 0)
+        {
+            throw new ArgumentException("Output path is required.", nameof(outputPath));
+        }
+
+        var safePath = outputPath.Replace("\"", "\\\"");
+        var args = $"export -o \"{safePath}\" --accept-source-agreements";
+
+        if (!string.IsNullOrWhiteSpace(additionalArgs))
+        {
+            args += " " + additionalArgs.Trim();
+        }
+
+        return RunWingetStreamingAsync(args, onOutputLine, cancellationToken);
+    }
+
+    public Task<int> ImportStreamingAsync(string importFile, Action<string> onOutputLine, CancellationToken cancellationToken)
+        => ImportStreamingAsync(importFile, additionalArgs: null, onOutputLine, cancellationToken);
+
+    public Task<int> ImportStreamingAsync(string importFile, string? additionalArgs, Action<string> onOutputLine, CancellationToken cancellationToken)
+    {
+        importFile = (importFile ?? string.Empty).Trim();
+        if (importFile.Length == 0)
+        {
+            throw new ArgumentException("Import file path is required.", nameof(importFile));
+        }
+
+        var safePath = importFile.Replace("\"", "\\\"");
+        var args = $"import -i \"{safePath}\" --accept-source-agreements --accept-package-agreements";
+
+        if (!string.IsNullOrWhiteSpace(additionalArgs))
+        {
+            args += " " + additionalArgs.Trim();
+        }
+
+        return RunWingetStreamingAsync(args, onOutputLine, cancellationToken);
+    }
+
     private static Task<int> RunWingetStreamingAsync(string args, Action<string> onOutputLine, CancellationToken cancellationToken)
         => ProcessRunner.RunStreamingAsync(WingetExe, args, onOutputLine, cancellationToken);
 
